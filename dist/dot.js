@@ -36,8 +36,19 @@
  * Importing this adapter without `@arki/dot` installed will fail at module
  * load — that is intentional: the adapter only makes sense in a DOT app.
  */
-import { defineDotPip } from '@arki/dot/pip';
+import { pip, DotPipError } from '@arki/dot/pip';
 import { EVENT_STORE_URL_VARIANTS, eventSourcingFeatures } from './event-sourcing-features.js';
+/**
+ * Stable error codes thrown by the event-sourcing pip. Exported so consumers
+ * and coding agents can match against them — never parse the message.
+ *
+ * @see packages/dot/docs/principles.md — principle 1.3 ("errors are part
+ * of the API") and principle 4 ("agent-discoverable everywhere").
+ */
+export const EVENT_SOURCING_PIP_ERROR_CODES = {
+    /** boot was called without a configured event-store URL. */
+    dbUrlNotConfigured: 'EVENT_SOURCING_PIP_E001',
+};
 /**
  * Resolve the event-store connection URL from explicit options first, then
  * from the recognised env vars in priority order. Returns `undefined` when
@@ -56,29 +67,40 @@ function resolveDbUrl(explicit) {
 /**
  * Build a DOT pip that opens the event store, wires command handlers
  * into an in-memory message bus, and publishes both as services. The
- * kernel calls `dispose` in reverse-topological order to release the
+ * kernel calls `dispose` in reverse declaration order to release the
  * underlying PG pool.
  */
 export function eventSourcing(options) {
-    const name = options.name ?? 'event-sourcing';
     const commandHandlers = options.commandHandlers ?? [];
     // Captured at boot so dispose can call it without re-reading services
     // (dispose is allowed to run even when services failed to publish).
     let closeStore;
-    return defineDotPip({
-        name,
+    return pip({
+        name: 'event-sourcing',
         version: '0.1.0',
-        provides: ['event-store', 'message-bus'],
         configure(ctx) {
             ctx.registerService('eventStore', 'event-store');
             ctx.registerService('messageBus', 'message-bus');
+            ctx.declareProvides('event-store', 'message-bus');
         },
         boot() {
+            // Validate at the pip boundary so the DOT lifecycle gets a coded
+            // error. `eventSourcingFeatures.initEventSourcing` still throws raw
+            // `Error` for non-DOT consumers (its public contract is unchanged);
+            // the check here makes sure we never reach it without a URL.
             const dbUrl = resolveDbUrl(options.dbUrl);
+            if (dbUrl === undefined) {
+                throw new DotPipError({
+                    code: EVENT_SOURCING_PIP_ERROR_CODES.dbUrlNotConfigured,
+                    message: '[event-sourcing] Event Store database URL is not configured.',
+                    remediation: `Pass options.dbUrl to eventSourcing(...) or set one of ${EVENT_STORE_URL_VARIANTS.join(', ')} in the environment before booting the app.`,
+                    docsUrl: 'https://arki.dev/dot/errors/event-sourcing-pip-e001',
+                });
+            }
             const { eventStore, close } = eventSourcingFeatures.initEventSourcing(options.projections, dbUrl);
             closeStore = close;
             const messageBus = eventSourcingFeatures.initMessageBus(eventStore, [...commandHandlers]);
-            return { services: { eventStore, messageBus } };
+            return { eventStore, messageBus };
         },
         async dispose() {
             if (closeStore !== undefined) {

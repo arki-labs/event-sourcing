@@ -37,9 +37,20 @@
  * load — that is intentional: the adapter only makes sense in a DOT app.
  */
 import type { EventStore, MessageBus } from '@event-driven-io/emmett';
-import type { DotPip } from '@arki/dot/pip';
+import type { EmptyShape, Pip } from '@arki/dot/pip';
 import type { CommandHandlerRegistration } from './command.js';
 import type { PostgreSQLProjectionInput } from './event-sourcing-features.js';
+/**
+ * Stable error codes thrown by the event-sourcing pip. Exported so consumers
+ * and coding agents can match against them — never parse the message.
+ *
+ * @see packages/dot/docs/principles.md — principle 1.3 ("errors are part
+ * of the API") and principle 4 ("agent-discoverable everywhere").
+ */
+export declare const EVENT_SOURCING_PIP_ERROR_CODES: {
+    /** boot was called without a configured event-store URL. */
+    readonly dbUrlNotConfigured: "EVENT_SOURCING_PIP_E001";
+};
 /**
  * Options for the event-sourcing DOT adapter.
  */
@@ -64,11 +75,6 @@ export type EventSourcingDotOptions = {
      * `process.env`. If none are set, `boot` throws.
      */
     readonly dbUrl?: string;
-    /**
-     * Pip name override. Defaults to `'event-sourcing'`. Use this only
-     * when composing multiple event-sourcing scopes inside the same app.
-     */
-    readonly name?: string;
 };
 /** Services published by the event-sourcing adapter. */
 export type EventSourcingServices = {
@@ -83,8 +89,8 @@ export type EventSourcingServices = {
 /**
  * Build a DOT pip that opens the event store, wires command handlers
  * into an in-memory message bus, and publishes both as services. The
- * kernel calls `dispose` in reverse-topological order to release the
+ * kernel calls `dispose` in reverse declaration order to release the
  * underlying PG pool.
  */
-export declare function eventSourcing(options: EventSourcingDotOptions): DotPip<EventSourcingServices>;
+export declare function eventSourcing(options: EventSourcingDotOptions): Pip<EmptyShape, EventSourcingServices>;
 //# sourceMappingURL=dot.d.ts.map
