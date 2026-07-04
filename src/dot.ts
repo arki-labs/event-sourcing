@@ -5,7 +5,7 @@
  * single `DotPip`. The pip opens the PostgreSQL event store in
  * `boot`, attaches command handlers to an in-memory message bus, publishes
  * both as `services.eventStore` and `services.messageBus`, and closes the
- * event store pool in `dispose` (reverse-topological order).
+ * event store pool in `dispose` (reverse declaration order).
  *
  * @example
  * ```ts
