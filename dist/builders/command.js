@@ -1,3 +1,17 @@
+import { EVENT_SOURCING_ACTION_META_SCHEMA, schemaToJsonObject } from '../dot-action.js';
+function commandAction(type, inputSchema) {
+    return {
+        id: type,
+        binding: 'es',
+        direction: 'in',
+        address: type,
+        metaSchema: EVENT_SOURCING_ACTION_META_SCHEMA,
+        meta: {
+            kind: 'command',
+            input: schemaToJsonObject(inputSchema, `command "${type}" input`),
+        },
+    };
+}
 /**
  * Creates a strongly-typed command factory function.
  *
@@ -23,7 +37,8 @@
  */
 export function defineCommand(config) {
     const { type, inputSchema, metadataSchema } = config;
-    return (input, metadata) => {
+    let cachedAction;
+    const factory = (input, metadata) => {
         const validatedInput = inputSchema.parse(input);
         const validatedMetadata = metadataSchema ? metadataSchema.parse(metadata) : metadata;
         // Conditionally construct the command object based on whether metadata is provided
@@ -40,5 +55,27 @@ export function defineCommand(config) {
                 kind: 'Command',
             });
     };
+    const getAction = () => {
+        cachedAction ??= commandAction(type, inputSchema);
+        return cachedAction;
+    };
+    Object.defineProperties(factory, {
+        type: { value: type, enumerable: true },
+        inputSchema: { value: inputSchema },
+        ...(metadataSchema === undefined ? {} : { metadataSchema: { value: metadataSchema } }),
+        id: { value: type, enumerable: true },
+        binding: { value: 'es', enumerable: true },
+        direction: { value: 'in', enumerable: true },
+        address: { value: type, enumerable: true },
+        metaSchema: { value: EVENT_SOURCING_ACTION_META_SCHEMA, enumerable: true },
+        meta: {
+            enumerable: true,
+            get() {
+                return getAction().meta;
+            },
+        },
+        toDotAction: { value: getAction },
+    });
+    return factory;
 }
 //# sourceMappingURL=command.js.map

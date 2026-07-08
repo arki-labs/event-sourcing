@@ -22,20 +22,105 @@ Peer-installs:
 
 - **Event store** — `getEventStore(connectionString, options)` opens a PostgreSQL event store with a clean `close()` that releases the pool.
 - **Message bus** — `eventSourcingFeatures.initMessageBus(eventStore, handlers)` builds an in-memory message bus, registers command handlers, and wraps each handler with stream-name resolution + logging.
+- **DOT adapter** — `eventSourcing()` opens the store, publishes `eventStore` + `messageBus`, collects feature-local ES bundles, and registers the `event-catalog` projection.
 - **Process managers** — `createProcessManager` (per-batch), `createStatefulProcessManager` (per-batch with state), and `createSimpleProcessManager` (per-message with a pre-bound context).
-- **Builders** — fluent `defineCommand`, `defineEvent`, `defineDecider`, `defineProjection`, `defineCommandHandler`, `defineProcessManager`, `defineStatefulProcessManager` for type-safe authoring.
+- **Builders** — `defineCommand`, `defineEvent`, `defineDecider`, `defineProjection`, `defineCommandHandler`, `defineProcessManager`, `defineStatefulProcessManager` for type-safe authoring.
 - **Drizzle projection helpers** — `drizzleProjection` / `drizzleWithRepoProjection` so projection handlers receive a typed Drizzle database (or repository registry) instead of a raw client.
 
 ## Quick start
 
-### 1. Bootstrap an event store and message bus
+### DOT app setup
+
+```ts
+import { z } from '@arki/contracts';
+import { defineApp, pip, provide, token } from '@arki/dot';
+import { eventSourcing, es, type EsBundle } from '@arki/event-sourcing/dot';
+import { defineCommand, defineCommandHandler, defineEvent } from '@arki/event-sourcing/builders';
+
+const placeOrder = defineCommand({
+  type: 'PlaceOrder',
+  inputSchema: z.object({ orderId: z.string(), total: z.number() }),
+});
+
+const orderPlaced = defineEvent({
+  type: 'OrderPlaced',
+  dataSchema: z.object({ orderId: z.string(), total: z.number() }),
+});
+
+const placeOrderHandler = defineCommandHandler({
+  initialState: () => ({ placed: false }),
+  evolve: (state, event) => (event.type === 'OrderPlaced' ? { placed: true } : state),
+  decide: (command, state) => {
+    if (state.placed) throw new Error('Order already placed');
+    return [orderPlaced({ orderId: command.data.orderId, total: command.data.total })];
+  },
+});
+
+export const OrdersEs = token<EsBundle>()('orders.es');
+
+export const ordersEsPip = pip({
+  name: 'orders-es',
+  actions: [placeOrder, orderPlaced],
+  boot: () =>
+    provide(
+      OrdersEs,
+      es.bundle({
+        handlers: [es.handle(placeOrder, placeOrderHandler, command => `order-${command.data.orderId}`)],
+        readModels: [],
+      }),
+    ),
+});
+
+export const app = defineApp('shop-api')
+  .use(ordersEsPip)
+  .use(eventSourcing({ bundles: [OrdersEs], dbUrl: process.env.DB_URL }));
+```
+
+`eventSourcing()` may be mounted with no options for append-only mode. It resolves the store URL from `EVENT_STORE_URL`, `EVENTSTORE_URL`, or `EVENT_DB_URL`; apps that use a different env name should pass `dbUrl` explicitly.
+
+Commands and events produced by `defineCommand` / `defineEvent` contribute DOT actions. `dot explain --as event-catalog` renders their JSON Schemas without booting the app. Deprecated dynamic `commandHandlers` still run, but are intentionally absent from the manifest and catalog.
+
+### Composition order
+
+Feature pips that handle commands publish ES bundles. Feature pips that send commands need the `messageBus` service. Mount them in this order:
+
+```text
+es-feature pips -> eventSourcing() -> http/queue feature pips that need messageBus -> http()/queue runtime
+```
+
+A feature that both handles `PlaceOrder` and exposes `POST /orders` should be split into two pips: `orders-es` publishes `OrdersEs`; `orders-http` needs `messageBus` and binds the HTTP route.
+
+### HTTP and queue recipes
+
+Expose a command over HTTP explicitly:
+
+```ts
+routes().bind(placeOrderRoute, async ({ body }, { messageBus }) => {
+  await messageBus.send(placeOrder(body));
+  return { ok: true };
+});
+```
+
+Use `@arki/queue` for durable/async command transport:
+
+```ts
+jobs.worker('orders.place', async ({ payload }, { messageBus }) => {
+  await messageBus.send(placeOrder(payload));
+});
+```
+
+The message bus published by this package is strictly in-process synchronous dispatch. It is not durable, does not distribute work across instances, and does not survive restarts or rolling deploys.
+
+### Programmatic bootstrap
+
+Non-DOT composition roots can still use the lower-level helpers:
 
 ```ts
 import { eventSourcingFeatures } from '@arki/event-sourcing';
 
 const { eventStore, close } = eventSourcingFeatures.initEventSourcing(
   [
-    /* projections produced by defineProjection / drizzleProjection / postgreSQLProjection */
+    /* read-model projections produced by defineProjection / drizzleProjection / postgreSQLProjection */
   ],
   process.env.EVENT_STORE_URL,
 );
@@ -44,46 +129,10 @@ const messageBus = eventSourcingFeatures.initMessageBus(eventStore, [
   /* { commandType, handler, getStreamName } registrations */
 ]);
 
-// Later, on shutdown:
 await close();
 ```
 
-`initEventSourcing` throws a descriptive error if the connection string is undefined, naming `EVENT_STORE_URL`, `EVENTSTORE_URL`, and `EVENT_DB_URL` as the recognised env var names.
-
-### 2. Define a command, a decider, and a handler
-
-```ts
-import { defineCommand, defineEvent, defineDecider, defineCommandHandler, z } from '@arki/event-sourcing';
-// (or import each builder from '@arki/event-sourcing/builders')
-
-const PlaceOrder = defineCommand({
-  type: 'PlaceOrder',
-  inputSchema: z.object({ orderId: z.string(), total: z.number() }),
-  metadataSchema: z.object({ userId: z.string() }),
-});
-
-const OrderPlaced = defineEvent({
-  type: 'OrderPlaced',
-  inputSchema: z.object({ orderId: z.string(), total: z.number() }),
-  metadataSchema: z.object({ userId: z.string(), at: z.string() }),
-});
-
-const orderDecider = defineDecider()
-  .initialState(() => ({ placed: false }))
-  .evolve((state, event) => (event.type === 'OrderPlaced' ? { placed: true } : state))
-  .decide((command, state) => {
-    if (state.placed) throw new Error('Order already placed');
-    return OrderPlaced({ orderId: command.data.orderId, total: command.data.total }, {
-      userId: command.metadata.userId,
-      at: new Date().toISOString(),
-    });
-  })
-  .build();
-
-export const placeOrderHandler = defineCommandHandler(orderDecider);
-```
-
-### 3. Define a process manager
+### Process managers
 
 Use `createProcessManager` for batch processing, or `createSimpleProcessManager` when the handler closes over a fixed context and processes one event at a time:
 
@@ -114,6 +163,8 @@ await eventSourcingFeatures.setupProcessManagers(eventStore, [sendOrderEmails]);
 - `@arki/event-sourcing/builders` — fluent builders only.
 - `@arki/event-sourcing/store` — `getEventStore`, `drizzleProjection`, `postgreSQLProjection`, projection context types.
 - `@arki/event-sourcing/bus` — `getInMemoryMessageBus` and message bus types re-exported from Emmett.
+- `@arki/event-sourcing/dot` — DOT pip, ES bundle helpers, and ES pip error codes.
+- `@arki/event-sourcing/projection` — pure `event-catalog` projection for DOT.
 
 ## Documentation
 

@@ -1,5 +1,6 @@
 import type { z } from '@arki/contracts';
 import type { Command, DefaultCommandMetadata } from '../command.js';
+import type { EventSourcingActionDeclaration } from '../dot-action.js';
 import type { DefaultRecord } from '../types.js';
 /**
  * Configuration for defining a domain command factory.
@@ -11,6 +12,12 @@ export type CommandConfig<TType extends string, TInput extends DefaultRecord, TM
     inputSchema: z.ZodType<TInput>;
     /** Optional Zod schema for validating command metadata */
     metadataSchema?: z.ZodType<TMetadata>;
+};
+export type CommandFactory<TType extends string, TInput extends DefaultRecord, TMetadata extends DefaultCommandMetadata | undefined = undefined> = ((input: TInput, metadata?: TMetadata) => Command<TType, TInput, TMetadata>) & EventSourcingActionDeclaration & {
+    readonly type: TType;
+    readonly inputSchema: z.ZodType<TInput>;
+    readonly metadataSchema?: z.ZodType<TMetadata>;
+    toDotAction(): EventSourcingActionDeclaration;
 };
 /**
  * Creates a strongly-typed command factory function.
@@ -35,5 +42,5 @@ export type CommandConfig<TType extends string, TInput extends DefaultRecord, TM
  * );
  * ```
  */
-export declare function defineCommand<TType extends string, TInput extends DefaultRecord, TMetadata extends DefaultCommandMetadata | undefined = undefined>(config: CommandConfig<TType, TInput, TMetadata>): (input: TInput, metadata?: TMetadata) => Command<TType, TInput, TMetadata>;
+export declare function defineCommand<TType extends string, TInput extends DefaultRecord, TMetadata extends DefaultCommandMetadata | undefined = undefined>(config: CommandConfig<TType, TInput, TMetadata>): CommandFactory<TType, TInput, TMetadata>;
 //# sourceMappingURL=command.d.ts.map

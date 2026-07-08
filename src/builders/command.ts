@@ -1,6 +1,8 @@
 import type { z } from '@arki/contracts';
 
 import type { Command, DefaultCommandMetadata } from '../command.js';
+import type { EventSourcingActionDeclaration, JsonObject } from '../dot-action.js';
+import { EVENT_SOURCING_ACTION_META_SCHEMA, schemaToJsonObject } from '../dot-action.js';
 import type { DefaultRecord } from '../types.js';
 
 /**
@@ -18,6 +20,35 @@ export type CommandConfig<
   /** Optional Zod schema for validating command metadata */
   metadataSchema?: z.ZodType<TMetadata>;
 };
+
+export type CommandFactory<
+  TType extends string,
+  TInput extends DefaultRecord,
+  TMetadata extends DefaultCommandMetadata | undefined = undefined,
+> = ((input: TInput, metadata?: TMetadata) => Command<TType, TInput, TMetadata>) &
+  EventSourcingActionDeclaration & {
+    readonly type: TType;
+    readonly inputSchema: z.ZodType<TInput>;
+    readonly metadataSchema?: z.ZodType<TMetadata>;
+    toDotAction(): EventSourcingActionDeclaration;
+  };
+
+function commandAction<TType extends string>(
+  type: TType,
+  inputSchema: z.ZodType,
+): EventSourcingActionDeclaration {
+  return {
+    id: type,
+    binding: 'es',
+    direction: 'in',
+    address: type,
+    metaSchema: EVENT_SOURCING_ACTION_META_SCHEMA,
+    meta: {
+      kind: 'command',
+      input: schemaToJsonObject(inputSchema, `command "${type}" input`),
+    },
+  };
+}
 
 /**
  * Creates a strongly-typed command factory function.
@@ -48,10 +79,11 @@ export function defineCommand<
   TMetadata extends DefaultCommandMetadata | undefined = undefined,
 >(
   config: CommandConfig<TType, TInput, TMetadata>,
-): (input: TInput, metadata?: TMetadata) => Command<TType, TInput, TMetadata> {
+): CommandFactory<TType, TInput, TMetadata> {
   const { type, inputSchema, metadataSchema } = config;
+  let cachedAction: EventSourcingActionDeclaration | undefined;
 
-  return (input: TInput, metadata?: TMetadata) => {
+  const factory = (input: TInput, metadata?: TMetadata) => {
     const validatedInput = inputSchema.parse(input);
     const validatedMetadata = metadataSchema ? metadataSchema.parse(metadata) : metadata;
 
@@ -69,4 +101,29 @@ export function defineCommand<
           kind: 'Command' as const,
         }) as unknown as Command<TType, TInput, TMetadata>;
   };
+
+  const getAction = (): EventSourcingActionDeclaration => {
+    cachedAction ??= commandAction(type, inputSchema);
+    return cachedAction;
+  };
+
+  Object.defineProperties(factory, {
+    type: { value: type, enumerable: true },
+    inputSchema: { value: inputSchema },
+    ...(metadataSchema === undefined ? {} : { metadataSchema: { value: metadataSchema } }),
+    id: { value: type, enumerable: true },
+    binding: { value: 'es', enumerable: true },
+    direction: { value: 'in', enumerable: true },
+    address: { value: type, enumerable: true },
+    metaSchema: { value: EVENT_SOURCING_ACTION_META_SCHEMA, enumerable: true },
+    meta: {
+      enumerable: true,
+      get(): JsonObject {
+        return getAction().meta;
+      },
+    },
+    toDotAction: { value: getAction },
+  });
+
+  return factory as CommandFactory<TType, TInput, TMetadata>;
 }

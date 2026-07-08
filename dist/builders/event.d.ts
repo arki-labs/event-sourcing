@@ -1,5 +1,6 @@
 import type { z } from '@arki/contracts';
 import type { Event } from '../event.js';
+import type { EventSourcingActionDeclaration } from '../dot-action.js';
 import type { DefaultRecord } from '../types.js';
 /**
  * Configuration for defining a domain event factory.
@@ -11,6 +12,12 @@ export type EventConfig<TType extends string, TData extends DefaultRecord, TMeta
     dataSchema: z.ZodType<TData>;
     /** Optional Zod schema for validating event metadata */
     metadataSchema?: z.ZodType<TMetadata>;
+};
+export type EventFactory<TType extends string, TData extends DefaultRecord, TMetadata extends DefaultRecord | undefined = undefined> = ((data: TData, metadata?: TMetadata) => Event<TType, TData, TMetadata>) & EventSourcingActionDeclaration & {
+    readonly type: TType;
+    readonly dataSchema: z.ZodType<TData>;
+    readonly metadataSchema?: z.ZodType<TMetadata>;
+    toDotAction(): EventSourcingActionDeclaration;
 };
 /**
  * Creates a strongly-typed event factory function.
@@ -35,5 +42,5 @@ export type EventConfig<TType extends string, TData extends DefaultRecord, TMeta
  * );
  * ```
  */
-export declare function defineEvent<TType extends string, TData extends DefaultRecord, TMetadata extends DefaultRecord | undefined = undefined>(config: EventConfig<TType, TData, TMetadata>): (data: TData, metadata?: TMetadata) => Event<TType, TData, TMetadata>;
+export declare function defineEvent<TType extends string, TData extends DefaultRecord, TMetadata extends DefaultRecord | undefined = undefined>(config: EventConfig<TType, TData, TMetadata>): EventFactory<TType, TData, TMetadata>;
 //# sourceMappingURL=event.d.ts.map

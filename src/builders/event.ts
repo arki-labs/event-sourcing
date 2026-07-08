@@ -1,6 +1,8 @@
 import type { z } from '@arki/contracts';
 
 import type { Event } from '../event.js';
+import type { EventSourcingActionDeclaration, JsonObject } from '../dot-action.js';
+import { EVENT_SOURCING_ACTION_META_SCHEMA, schemaToJsonObject } from '../dot-action.js';
 import type { DefaultRecord } from '../types.js';
 
 /**
@@ -18,6 +20,35 @@ export type EventConfig<
   /** Optional Zod schema for validating event metadata */
   metadataSchema?: z.ZodType<TMetadata>;
 };
+
+export type EventFactory<
+  TType extends string,
+  TData extends DefaultRecord,
+  TMetadata extends DefaultRecord | undefined = undefined,
+> = ((data: TData, metadata?: TMetadata) => Event<TType, TData, TMetadata>) &
+  EventSourcingActionDeclaration & {
+    readonly type: TType;
+    readonly dataSchema: z.ZodType<TData>;
+    readonly metadataSchema?: z.ZodType<TMetadata>;
+    toDotAction(): EventSourcingActionDeclaration;
+  };
+
+function eventAction<TType extends string>(
+  type: TType,
+  dataSchema: z.ZodType,
+): EventSourcingActionDeclaration {
+  return {
+    id: type,
+    binding: 'es',
+    direction: 'out',
+    address: type,
+    metaSchema: EVENT_SOURCING_ACTION_META_SCHEMA,
+    meta: {
+      kind: 'event',
+      data: schemaToJsonObject(dataSchema, `event "${type}" data`),
+    },
+  };
+}
 
 /**
  * Creates a strongly-typed event factory function.
@@ -46,10 +77,11 @@ export function defineEvent<
   TType extends string,
   TData extends DefaultRecord,
   TMetadata extends DefaultRecord | undefined = undefined,
->(config: EventConfig<TType, TData, TMetadata>): (data: TData, metadata?: TMetadata) => Event<TType, TData, TMetadata> {
+>(config: EventConfig<TType, TData, TMetadata>): EventFactory<TType, TData, TMetadata> {
   const { type, dataSchema, metadataSchema } = config;
+  let cachedAction: EventSourcingActionDeclaration | undefined;
 
-  return (data: TData, metadata?: TMetadata) => {
+  const factory = (data: TData, metadata?: TMetadata) => {
     const validatedData = dataSchema.parse(data);
     const validatedMetadata = metadataSchema ? metadataSchema.parse(metadata) : metadata;
 
@@ -65,4 +97,29 @@ export function defineEvent<
           metadata: validatedMetadata,
         }) as unknown as Event<TType, TData, TMetadata>;
   };
+
+  const getAction = (): EventSourcingActionDeclaration => {
+    cachedAction ??= eventAction(type, dataSchema);
+    return cachedAction;
+  };
+
+  Object.defineProperties(factory, {
+    type: { value: type, enumerable: true },
+    dataSchema: { value: dataSchema },
+    ...(metadataSchema === undefined ? {} : { metadataSchema: { value: metadataSchema } }),
+    id: { value: type, enumerable: true },
+    binding: { value: 'es', enumerable: true },
+    direction: { value: 'out', enumerable: true },
+    address: { value: type, enumerable: true },
+    metaSchema: { value: EVENT_SOURCING_ACTION_META_SCHEMA, enumerable: true },
+    meta: {
+      enumerable: true,
+      get(): JsonObject {
+        return getAction().meta;
+      },
+    },
+    toDotAction: { value: getAction },
+  });
+
+  return factory as EventFactory<TType, TData, TMetadata>;
 }
