@@ -33,7 +33,7 @@ Peer-installs:
 
 ```ts
 import { z } from '@arki/contracts';
-import { defineApp, pip, provide, token } from '@arki/dot';
+import { defineApp, plugin, provide, token } from '@arki/dot';
 import { eventSourcing, es, type EsBundle } from '@arki/event-sourcing/dot';
 import { defineCommand, defineCommandHandler, defineEvent } from '@arki/event-sourcing/builders';
 
@@ -58,7 +58,7 @@ const placeOrderHandler = defineCommandHandler({
 
 export const OrdersEs = token<EsBundle>()('orders.es');
 
-export const ordersEsPip = pip({
+export const ordersEsPlugin = plugin({
   name: 'orders-es',
   actions: [placeOrder, orderPlaced],
   boot: () =>
@@ -72,7 +72,7 @@ export const ordersEsPip = pip({
 });
 
 export const app = defineApp('shop-api')
-  .use(ordersEsPip)
+  .use(ordersEsPlugin)
   .use(eventSourcing({ bundles: [OrdersEs], dbUrl: process.env.DB_URL }));
 ```
 
@@ -82,13 +82,13 @@ Commands and events produced by `defineCommand` / `defineEvent` contribute DOT a
 
 ### Composition order
 
-Feature pips that handle commands publish ES bundles. Feature pips that send commands need the `messageBus` service. Mount them in this order:
+Feature plugins that handle commands publish ES bundles. Feature plugins that send commands need the `messageBus` service. Mount them in this order:
 
 ```text
-es-feature pips -> eventSourcing() -> http/queue feature pips that need messageBus -> http()/queue runtime
+es-feature plugins -> eventSourcing() -> http/queue feature plugins that need messageBus -> http()/queue runtime
 ```
 
-A feature that both handles `PlaceOrder` and exposes `POST /orders` should be split into two pips: `orders-es` publishes `OrdersEs`; `orders-http` needs `messageBus` and binds the HTTP route.
+A feature that both handles `PlaceOrder` and exposes `POST /orders` should be split into two plugins: `orders-es` publishes `OrdersEs`; `orders-http` needs `messageBus` and binds the HTTP route.
 
 ### HTTP and queue recipes
 
@@ -163,7 +163,7 @@ await eventSourcingFeatures.setupProcessManagers(eventStore, [sendOrderEmails]);
 - `@arki/event-sourcing/builders` — fluent builders only.
 - `@arki/event-sourcing/store` — `getEventStore`, `drizzleProjection`, `postgreSQLProjection`, projection context types.
 - `@arki/event-sourcing/bus` — `getInMemoryMessageBus` and message bus types re-exported from Emmett.
-- `@arki/event-sourcing/dot` — DOT pip, ES bundle helpers, and ES pip error codes.
+- `@arki/event-sourcing/dot` — DOT plugin, ES bundle helpers, and ES plugin error codes.
 - `@arki/event-sourcing/projection` — pure `event-catalog` projection for DOT.
 
 ## Documentation
