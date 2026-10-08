@@ -1,6 +1,6 @@
 {
   "name": "@arki/event-sourcing",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Event sourcing primitives — event store, message bus, projections, process managers — built on Emmett for ARKI.",
   "license": "MIT",
   "repository": {
@@ -90,15 +90,15 @@
     "package.json"
   ],
   "dependencies": {
-    "@arki/contracts": "0.0.3",
-    "@arki/log": "0.0.2",
+    "@arki/contracts": "0.0.4",
+    "@arki/log": "0.0.3",
     "@event-driven-io/emmett": "^0.41.0",
     "@event-driven-io/emmett-postgresql": "^0.41.0",
-    "ansis": "^3.3.2",
-    "drizzle-orm": "1.0.0-rc.1"
+    "ansis": "^3.17.0",
+    "drizzle-orm": "1.0.0-rc.4"
   },
   "peerDependencies": {
-    "@arki/dot": "^0.4.0"
+    "@arki/dot": "^0.4.1"
   },
   "peerDependenciesMeta": {
     "@arki/dot": {
